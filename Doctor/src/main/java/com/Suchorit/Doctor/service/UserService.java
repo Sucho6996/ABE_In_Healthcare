@@ -2,6 +2,7 @@ package com.Suchorit.Doctor.service;
 
 import com.Suchorit.Doctor.controller.AAFeign;
 import com.Suchorit.Doctor.controller.UserFeign;
+import com.Suchorit.Doctor.model.KeyRequest;
 import com.Suchorit.Doctor.model.PatientDetails;
 import com.Suchorit.Doctor.model.Staff;
 import com.Suchorit.Doctor.repo.KeyRepo;
@@ -218,5 +219,18 @@ public class UserService {
         PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
         KeyFactory kf = KeyFactory.getInstance("EC");
         return kf.generatePrivate(spec);
+    }
+
+
+    public ResponseEntity<Map<String, Object>> genStaffAttrKey(String authHeader) {
+        KeyRequest payload=new KeyRequest();
+
+        String token=authHeader.substring(7);
+        String regNo= jwtService.extractUserName(token);
+        Staff staff=userRepo.findByregNo(regNo);
+        payload.setuId(staff.getRegNo());
+        payload.setAttributes(new ArrayList<>(List.of(staff.getDesignation(),staff.getSpecialization())));
+
+        return aaFeign.generateStaffAttributeKeys(payload);
     }
 }

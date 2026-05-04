@@ -18,22 +18,41 @@ public class PatientDetails {
     private String hosId;
     private String allowedRole;
     private String allowedSpecialization;
-    private String key;
+    private String policyType;
     private String uploadTime;
+    private String accessTree;
+    private String cipherKey;
     //For Image
     private String imageName;
     private String imageType;
-
-    public String getKey() {
-        return key;
-    }
-
-    public void setKey(String key) {
-        this.key = key;
-    }
-
     @Lob
     private byte[] image;
+
+    public String getAccessTree() {
+        return accessTree;
+    }
+
+    public void setAccessTree(String accessTree) {
+        this.accessTree = accessTree;
+    }
+
+    public String getCipherKey() {
+        return cipherKey;
+    }
+
+    public void setCipherKey(String cipherKey) {
+        this.cipherKey = cipherKey;
+    }
+
+    public String getPolicyType() {
+        return policyType;
+    }
+
+    public void setPolicyType(String policyType) {
+        this.policyType = policyType;
+    }
+
+
 
     public long getId() {
         return id;

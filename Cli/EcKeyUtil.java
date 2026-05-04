@@ -37,13 +37,9 @@ public class EcKeyUtil {
         KeyAgreement ka = KeyAgreement.getInstance("ECDH");
         ka.init(userPrivate);
         ka.doPhase(rolePublic, true);
-        byte[] shared = ka.generateSecret();    // Raw shared secret
-
-        // Derive AES wrap key from shared secret
+        byte[] shared = ka.generateSecret();
         MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
         byte[] hash = sha256.digest(shared);
-
-        // Use 16 bytes (128-bit) or 32 bytes (256-bit)
         return new SecretKeySpec(Arrays.copyOf(hash, 16), "AES");
     }
 

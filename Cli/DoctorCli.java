@@ -1,5 +1,10 @@
 import org.json.JSONObject;
+import org.bouncycastle.jce.ECNamedCurveTable;
+import org.bouncycastle.jce.spec.ECParameterSpec;
+import org.bouncycastle.math.ec.ECPoint;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 
+import java.math.BigInteger;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.awt.*;
@@ -13,6 +18,7 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.*;
 import java.util.List;
+import java.util.stream.Collectors;
 
 
 public class DoctorCli {
@@ -26,7 +32,7 @@ public class DoctorCli {
         int choice;
 
         while (true) {
-            System.out.println("\n=== Doctor Service CLI ===");
+            System.out.println("\n=== Staff Service CLI ===");
 //            System.out.println("1. Signup");
            if(jwtToken==null) System.out.println("1. Login");
            else {
@@ -47,6 +53,7 @@ public class DoctorCli {
                     if(choice==3) resetPass(sc);
                     else if(choice==4) getPDetailsByHos();
                     else if(choice==5) getPDetailsByProf();
+//                    else if(choice==8) getOrKey();
                 }
                 else if(choice==8) {
                     jwtToken=null;
@@ -206,6 +213,12 @@ public class DoctorCli {
             System.out.println("No image found");
             return;
         }
+        //if(obj access policy is OR) call OR decryption from here
+        if(obj.has("policyType") && obj.getString("policyType").equals("or")) {
+            System.out.println("access policy is OR");
+            orDesc(obj);
+            return;
+        }
 
         try {
             // ================= ENCRYPTED IMAGE =================
@@ -229,44 +242,24 @@ public class DoctorCli {
             }catch (Exception e){
                 System.out.println(e.getMessage()+"--> No file found for private key");
             }
+            File tempFile=null;
             SecretKey secretKey=EcKeyUtil.deriveECDHKey(privateKey,publicKey);
             String roleKey=keyObj.getString("role");
             byte[] role=Base64.getDecoder().decode(keyObj.getString("role"));
             byte[] roleSecret=AESGCM.decrypt(role,secretKey);
-            PrivateKey rolePrivateKey=EcKeyUtil.loadPrivateKeyFromBase64
-                    (Base64.getEncoder().encodeToString(roleSecret));
+            PrivateKey rolePrivateKey=EcKeyUtil.loadPrivateKeyFromBase64(Base64.getEncoder().encodeToString(roleSecret));
             SecretKey roleSecretKey=EcKeyUtil.deriveECDHKey(rolePrivateKey,patientPubKey);
             byte[] decryptedImg = encryptedImg;
-//            PrivateKey rolePrivKey =
-//                    EcKeyUtil.loadPrivateKeyFromBase64(keyObj.getString("role"));
-//
-//            SecretKey roleSharedKey =
-//                    EcKeyUtil.deriveECDHKey(rolePrivKey, patientPubKey);
-
-            // IMPORTANT: Uses SAME AESGCM.decrypt() as sender encrypt()
             decryptedImg = AESGCM.decrypt(decryptedImg, roleSecretKey);
-            //decryptedImg = Arrays.copyOfRange(decryptedImg, 16, decryptedImg.length);
-//            System.out.println("RoleKey: " +
-//                    Base64.getEncoder().encodeToString(roleSecretKey.getEncoded()));
-
-            //decryptedImg = Arrays.copyOfRange(decryptedImg, 32, decryptedImg.length);
-            File tempFile=null;
             try {
                 if (obj.has("spec") && !obj.getString("spec").equals("N/A")) {
-
-                    if (!keyObj.has("spec")) {
-                        throw new SecurityException("Access denied: specialization required");
-                    }
+                    if (!keyObj.has("spec")) throw new SecurityException("Access denied: specialization required");
                     byte[] spec=Base64.getDecoder().decode(keyObj.getString("spec"));
                     byte[] specSecret=AESGCM.decrypt(spec,secretKey);
                     PrivateKey specPrivateKey=EcKeyUtil.loadPrivateKeyFromBase64
                             (Base64.getEncoder().encodeToString(specSecret));
                     SecretKey specSecretKey=EcKeyUtil.deriveECDHKey(specPrivateKey,patientPubKey);
-                    // IMPORTANT: decrypt AFTER role, SAME AESGCM format
                     decryptedImg = AESGCM.decrypt(decryptedImg, specSecretKey);
-
-                    System.out.println("SpecKey: " +
-                            Base64.getEncoder().encodeToString(specSecretKey.getEncoded()));
                 }
                 String extension = UserCli.detectImageType(decryptedImg);
                 tempFile = File.createTempFile("prescription_", "." + extension);
@@ -294,6 +287,138 @@ public class DoctorCli {
         } catch (Exception e) {
             System.out.println("Error opening image: " + e.getMessage());
             return;
+        }
+    }
+
+    private static String getOrKey(){
+        String response=sendPost("/genStaffAttrKey","",jwtToken);
+        System.out.println(response);
+        return response;
+    }
+
+    private static SecretKeySpec deriveAESKey(ECPoint skPoint) throws Exception {
+        BigInteger kx = skPoint.getAffineXCoord().toBigInteger();
+        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+        return new SecretKeySpec(sha256.digest(kx.toByteArray()), "AES");
+    }
+    private static void orDesc(JSONObject obj) {
+        try {
+            // 1. Fetch Staff Attribute Keys (Di) and UID from Backend
+            String keyResponseStr = getOrKey();
+            if (keyResponseStr == null || keyResponseStr.isEmpty()) {
+                System.out.println("Failed to retrieve attribute keys.");
+                return;
+            }
+            JSONObject keyResponse = new JSONObject(keyResponseStr);
+            String uid = keyResponse.getString("uid");
+            JSONObject staffKeys = keyResponse.getJSONObject("keys"); // Map of attribute -> Di (Base64)
+
+            // 2. Parse the Access Tree String (e.g., "[[doctor, cardiology], [nurse]]")
+            String treeStr = obj.getString("accessTree");
+            List<List<String>> parsedTree = new ArrayList<>();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[(.*?)\\]").matcher(treeStr);
+            while (m.find()) {
+                String inside = m.group(1);
+                List<String> branch = Arrays.stream(inside.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+                if (!branch.isEmpty()) {
+                    parsedTree.add(branch);
+                }
+            }
+
+            // 3. Find a Satisfying Branch
+            List<String> satisfyingBranch = null;
+            for (List<String> branch : parsedTree) {
+                boolean canSatisfy = true;
+                for (String attr : branch) {
+                    if (!staffKeys.has(attr)) {
+                        canSatisfy = false;
+                        break;
+                    }
+                }
+                if (canSatisfy) {
+                    satisfyingBranch = branch;
+                    break;
+                }
+            }
+
+            if (satisfyingBranch == null) {
+                System.out.println("Access Denied: You do not possess the required attributes for this file.");
+                return;
+            }
+            System.out.println("Access Granted. Satisfying branch: " + satisfyingBranch);
+
+            // 4. Setup Curve and Hashing Parameters
+            ECParameterSpec ecSpec = ECNamedCurveTable.getParameterSpec("secp256r1");
+            BigInteger q = ecSpec.getN();
+
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] uidHashBytes = digest.digest(uid.getBytes(StandardCharsets.UTF_8));
+            BigInteger hashUid = new BigInteger(1, uidHashBytes);
+            BigInteger hashUidInv = hashUid.modInverse(q); // H^-1 mod q
+
+            JSONObject cipherKeyMap = new JSONObject(obj.getString("cipherKey"));
+            ECPoint pCombined = null;
+
+            // 5. Recover the Point (k * H * PMK) based on Threshold
+            if (satisfyingBranch.size() == 1) {
+                // OR Branch (Threshold 1)
+                String attr = satisfyingBranch.get(0);
+
+                BigInteger d_i = new BigInteger(1, Base64.getDecoder().decode(staffKeys.getString(attr)));
+                byte[] c_iBytes = Base64.getDecoder().decode(cipherKeyMap.getString(attr));
+                ECPoint c_i = ecSpec.getCurve().decodePoint(c_iBytes);
+
+                pCombined = c_i.multiply(d_i).normalize();
+
+            } else if (satisfyingBranch.size() == 2) {
+                // AND Branch (Threshold 2) -> Lagrange Interpolation
+                String attr1 = satisfyingBranch.get(0); // share 1 (x=1)
+                String attr2 = satisfyingBranch.get(1); // share 2 (x=2)
+
+                BigInteger d_1 = new BigInteger(1, Base64.getDecoder().decode(staffKeys.getString(attr1)));
+                byte[] c_1Bytes = Base64.getDecoder().decode(cipherKeyMap.getString(attr1));
+                ECPoint c_1 = ecSpec.getCurve().decodePoint(c_1Bytes);
+
+                BigInteger d_2 = new BigInteger(1, Base64.getDecoder().decode(staffKeys.getString(attr2)));
+                byte[] c_2Bytes = Base64.getDecoder().decode(cipherKeyMap.getString(attr2));
+                ECPoint c_2 = ecSpec.getCurve().decodePoint(c_2Bytes);
+
+                ECPoint p_1 = c_1.multiply(d_1).normalize();
+                ECPoint p_2 = c_2.multiply(d_2).normalize();
+
+                // L1(0) = 2, L2(0) = -1 = (q - 1)
+                BigInteger L1 = BigInteger.TWO;
+                BigInteger L2 = q.subtract(BigInteger.ONE);
+
+                pCombined = p_1.multiply(L1).add(p_2.multiply(L2)).normalize();
+            }
+
+            // 6. Multiply by H^-1 to get the final Session Key (SK)
+            ECPoint SK = pCombined.multiply(hashUidInv).normalize();
+
+            // 7. Derive AES Key and Decrypt
+            SecretKeySpec aesKey = deriveAESKey(SK);
+            byte[] encryptedImg = Base64.getDecoder().decode(obj.getString("image").replaceAll("\\s", ""));
+            byte[] decryptedImg = AESGCM.decrypt(encryptedImg, aesKey);
+
+            // 8. Save and Open File
+            String extension = UserCli.detectImageType(decryptedImg);
+            File tempFile = File.createTempFile("prescription_abe_", "." + extension);
+            tempFile.deleteOnExit();
+
+            try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+                fos.write(decryptedImg);
+            }
+
+            Desktop.getDesktop().open(tempFile);
+            System.out.println("ABE Decrypted Image opened successfully. Size: " + decryptedImg.length + " bytes.");
+
+        } catch (Exception e) {
+            System.out.println("ABE Decryption Error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

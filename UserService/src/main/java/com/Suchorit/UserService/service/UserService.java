@@ -182,6 +182,9 @@ public class UserService {
             map.put("image",Base64.getEncoder().encodeToString(patientDetail.getImage()));
             map.put("key", userRepo.findByadharNo(patientDetail.getAdharNo()).getPublicKey());
             map.put("spec",patientDetail.getAllowedSpecialization());
+            map.put("policyType", patientDetail.getPolicyType() != null ? patientDetail.getPolicyType() : "standard");
+            map.put("cipherKey", patientDetail.getCipherKey() != null ? patientDetail.getCipherKey() : "{}");
+            map.put("accessTree", patientDetail.getAccessTree() != null ? patientDetail.getAccessTree() : "[]");
         }
         return ResponseEntity.ok(map);
     }
@@ -226,5 +229,9 @@ public class UserService {
         String role1=patientRepo.findById(id).get().getAllowedRole();
         String role2=patientRepo.findById(id).get().getAllowedSpecialization();
         return aaFeign.giveSecretKey(publicKey,role1.toLowerCase(),role2.toLowerCase());
+    }
+
+    public ResponseEntity<Map<String, Object>> getPubKeys(List<String> roles) {
+        return aaFeign.getPubKeys(roles);
     }
 }

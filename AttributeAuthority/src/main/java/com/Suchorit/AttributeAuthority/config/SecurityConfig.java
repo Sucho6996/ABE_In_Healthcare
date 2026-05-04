@@ -47,7 +47,9 @@ public class SecurityConfig {
                                                 "AA/sendOtp",
                                                 "AA/getKey",
                                                 "AA/giveKey",
-                                                "AA/giveSecretKey")
+                                                "AA/giveSecretKey",
+                                                "AA/genStaffAttrKey",
+                                                "AA/getPubKeys")
                                 .permitAll()
                                 .anyRequest().authenticated())
                         .httpBasic(Customizer.withDefaults())

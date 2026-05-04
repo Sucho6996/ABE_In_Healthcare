@@ -1,5 +1,6 @@
 package com.Suchorit.Doctor.controller;
 
+import com.Suchorit.Doctor.model.KeyRequest;
 import com.Suchorit.Doctor.model.PatientDetails;
 import com.Suchorit.Doctor.service.LoginCreds;
 
@@ -65,5 +66,10 @@ public class UserController {
     @PostMapping("/getKey")
     public ResponseEntity<Map<String, String>> retrieve(@RequestHeader("Authorization") String authHeader){
         return userService.retrieve(authHeader);
+    }
+    @PostMapping("/genStaffAttrKey")
+    public ResponseEntity<Map<String, Object>> generateStaffAttributeKeys
+            (@RequestHeader("Authorization") String authHeader){
+        return userService.genStaffAttrKey(authHeader);
     }
 }

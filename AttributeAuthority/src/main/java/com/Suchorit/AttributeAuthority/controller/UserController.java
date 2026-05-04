@@ -2,6 +2,7 @@ package com.Suchorit.AttributeAuthority.controller;
 
 
 import com.Suchorit.AttributeAuthority.model.Hospitals;
+import com.Suchorit.AttributeAuthority.model.KeyRequest;
 import com.Suchorit.AttributeAuthority.model.UserData;
 import com.Suchorit.AttributeAuthority.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -76,5 +77,20 @@ public class UserController {
              @RequestParam("role1") String role1,
              @RequestParam("role2") String role2){
         return userService.giveSecretKey(publicKey,role1,role2);
+    }
+    @PostMapping("/genStaffAttrKey")
+    public ResponseEntity<Map<String, Object>> generateStaffAttributeKeys
+            (@RequestBody KeyRequest payload){
+        return userService.generateStaffAttributeKeys(payload.getuId(), payload.getAttributes());
+    }
+    @GetMapping("/getPubKeys")
+    public ResponseEntity<Map<String,Object>> getPubKeys
+            (@RequestParam List<String> roles){
+        return userService.getRolesKeys(roles);
+    }
+
+    @GetMapping("/getMasterPubPoint")
+    public ResponseEntity<Map<String, String>> getMasterPubPoint() {
+        return userService.getMasterPublicPoint();
     }
 }

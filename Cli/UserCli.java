@@ -1,17 +1,23 @@
 import org.json.JSONObject;
+import org.bouncycastle.jce.ECNamedCurveTable;
+import org.bouncycastle.jce.spec.ECParameterSpec;
+import org.bouncycastle.math.ec.ECPoint;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.awt.*;
 import java.io.*;
+import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.security.KeyFactory;
-import java.security.PrivateKey;
-import java.security.PublicKey;
+import java.security.*;
+//import java.security.spec.ECParameterSpec;
+//import java.security.spec.ECPoint;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.*;
 import java.util.List;
@@ -19,8 +25,10 @@ import java.util.List;
 public class UserCli {
 
     private static final String BASE_URL = "http://localhost:8090/user";
+    private static final String MASTER_PK="BBwlqaf2AsufDn9kGHNRrYV1YmiPUvfNkZH2qU5vIu+o+3OWeDnOkJ5PKjEViPmv5lISSbN9WPWn7yORMMSsC0M=";
     private static String jwtToken = null;
     private static String adhar;
+
 
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
@@ -35,8 +43,9 @@ public class UserCli {
             else {
                 System.out.println("3. Logout");
                 System.out.println("4. Deactivate Account");
-                System.out.println("5. Upload Prescription");
-                System.out.println("6. See all details");
+                System.out.println("5. Upload Prescription (AND access Only)");
+                System.out.println("6. Upload Prescription (OR-AND access)");
+                System.out.println("7. See all details");
             }
             System.out.println("8. Exit");
             System.out.print("Enter choice: ");
@@ -48,8 +57,9 @@ public class UserCli {
             else if(jwtToken!=null) {
                 if (choice==3) logout();
                 else if (choice==4) deactivate();
-                else if(choice==5) uploadImage(sc);
-                else if(choice==6) geMyDeta();
+                else if(choice==5) uploadImageAnd(sc);
+                else if(choice==6) uploadImageOr(sc);
+                else if(choice==7) geMyDeta();
             }
             else if(choice==8) {
                 jwtToken=null;
@@ -217,11 +227,14 @@ public class UserCli {
             Desktop.getDesktop().open(tempFile);
             try(FileOutputStream fos=new FileOutputStream(tempFile)){
                 fos.write(decodedImg);
+            }catch (Exception e){
+                System.out.println("Error opening image: " + e.getMessage());
+                return;
             }
             System.out.println("Image opened");
         }catch (Exception e) {
+            //sc.nextLine();
             System.out.println("Error opening image: " + e.getMessage());
-            e.printStackTrace();
         }
     }
 
@@ -234,7 +247,7 @@ public class UserCli {
         System.out.println(response);
     }
 
-    private static void uploadImage(Scanner sc) {
+    private static void uploadImageAnd(Scanner sc) {
         PublicKey accessKey1, accessKey2 = null;
         PrivateKey privateKey = null;
         SecretKey roleKey, specKey;
@@ -304,7 +317,7 @@ public class UserCli {
             roleKey = EcKeyUtil.deriveECDHKey(privateKey, accessKey1);
             byte[] encFileBytes = AESGCM.encrypt(fileBytes, roleKey);
 
-            System.out.println("RoleKey:" + Base64.getEncoder().encodeToString(roleKey.getEncoded()));
+            //System.out.println("RoleKey:" + Base64.getEncoder().encodeToString(roleKey.getEncoded()));
             encryptedFile = new File(
                     file.getParent(),
                     "enc_" + file.getName()
@@ -326,11 +339,202 @@ public class UserCli {
         obj.put("hosId", hosid);
         obj.put("allowedRole", allowedRole);
         obj.put("allowedSpecialization", specialization);
+        obj.put("policyType","and");
 
         // Send multipart form-data
         String response = sendMultipart
                 ("/upload", jwtToken, obj, "img", encryptedFile, "image/jpeg");
         System.out.println("\nServer Response: " + response);
+    }
+
+//    private static void uploadImageOr(Scanner sc){
+//        List<List<String>> accessTree=new ArrayList<>();
+//        List<String> list=new ArrayList<>();
+//        System.out.println("Enter Hospital Id:");
+//        String hosid = sc.nextLine();
+//
+//        System.out.print("Enter filePath: ");
+//        String filePath = sc.nextLine();
+//
+//        char choice='y';
+//        while(choice=='y' || choice=='Y'){
+//            System.out.print("Enter Allowed Role (Doctor/Nurse): ");
+//            String allowedRole = sc.nextLine();
+//            System.out.print("Enter Allowed Specialization (N/A if none): ");
+//            String specialization = sc.nextLine();
+//            if(allowedRole.isEmpty()){
+//                System.out.println("No role Specified.");
+//            }
+//            else {
+//                if(!specialization.toUpperCase().equals("NA") && !specialization.toUpperCase().equals("N/A")){
+//                    list.add(allowedRole);
+//                    list.add(specialization);
+//                    accessTree.add(new ArrayList<>(List.of(allowedRole,specialization)));
+//                }
+//                else {
+//                    list.add(allowedRole);
+//                    accessTree.add(new ArrayList<>(List.of(allowedRole)));
+//                }
+//            }
+//            System.out.println("Press Y to add another Role\nPress other character to exit");
+//            System.out.print("Your Choice:");
+//            choice = sc.next().charAt(0);
+//            sc.nextLine();
+//        }
+//        File file = new File(filePath);
+//        if (!file.exists()) {
+//            System.out.println("File not found!");
+//            return;
+//        }
+//        File encryptedFile = null;
+//
+//        try {
+//            byte[] fileBytes = Files.readAllBytes(file.toPath());
+//        } catch (IOException e) {
+//            System.out.println(e.getMessage());
+//            return;
+//        }
+//
+//        String queryString = "roles=" + String.join(",", list);
+//        String response =sendGet("/getPubKeys?"+queryString,jwtToken);
+//        System.out.println(response);
+//
+//    }
+
+    private static void uploadImageOr(Scanner sc) {
+        List<List<String>> accessTree = new ArrayList<>();
+        List<String> list = new ArrayList<>();
+
+        System.out.println("Enter Hospital Id:");
+        String hosid = sc.nextLine();
+
+        System.out.print("Enter filePath: ");
+        String filePath = sc.nextLine();
+
+        char choice = 'y';
+        while (choice == 'y' || choice == 'Y') {
+            System.out.print("Enter Allowed Role (Doctor/Nurse): ");
+            String allowedRole = sc.nextLine().toLowerCase();
+            System.out.print("Enter Allowed Specialization (N/A if none): ");
+            String specialization = sc.nextLine().toLowerCase();
+
+            if (allowedRole.isEmpty()) {
+                System.out.println("No role Specified.");
+            } else {
+                if (!specialization.equals("na") && !specialization.equals("n/a")) {
+                    list.add(allowedRole);
+                    list.add(specialization);
+                    accessTree.add(new ArrayList<>(List.of(allowedRole, specialization)));
+                } else {
+                    list.add(allowedRole);
+                    accessTree.add(new ArrayList<>(List.of(allowedRole)));
+                }
+            }
+            System.out.println("Press Y to add another Role\nPress other character to exit");
+            System.out.print("Your Choice:");
+            choice = sc.next().charAt(0);
+            sc.nextLine();
+        }
+
+        File file = new File(filePath);
+        if (!file.exists()) {
+            System.out.println("File not found!");
+            return;
+        }
+
+        try {
+            // 1. Fetch File and Keys
+            byte[] fileBytes = Files.readAllBytes(file.toPath());
+            String queryString = "roles=" + String.join(",", list);
+            String response = sendGet("/getPubKeys?" + queryString, jwtToken);
+            JSONObject pubKeysJson = new JSONObject(response);
+
+            // 2. Setup Bouncy Castle Curve Parameters
+            ECParameterSpec ecSpec = ECNamedCurveTable.getParameterSpec("secp256r1");
+            BigInteger q = ecSpec.getN();
+            SecureRandom random = new SecureRandom();
+
+            // 3. Algorithm: Choose random k from Zq*
+            BigInteger k = new BigInteger(q.bitLength(), random).mod(q);
+
+            // 4. Algorithm: Calculate Session Key SK = k * PK
+            byte[] masterPkBytes = Base64.getDecoder().decode(MASTER_PK);
+            ECPoint PK = ecSpec.getCurve().decodePoint(masterPkBytes);
+            ECPoint SK = PK.multiply(k).normalize();
+
+            // 5. Algorithm: Hash SK's X-coordinate to get AES_KEY
+            BigInteger kx = SK.getAffineXCoord().toBigInteger();
+            MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
+            byte[] aesKeyBytes = sha256.digest(kx.toByteArray());
+            SecretKeySpec aesKey = new SecretKeySpec(aesKeyBytes, "AES");
+
+            // 6. Algorithm: Encrypt Message (Cm)
+            byte[] encFileBytes = AESGCM.encrypt(fileBytes, aesKey); // Your existing AES util
+            File encryptedFile = new File(file.getParent(), "enc_" + file.getName());
+            try (FileOutputStream fos = new FileOutputStream(encryptedFile)) {
+                fos.write(encFileBytes);
+            }
+
+            // 7. Algorithm: Generate Attribute Ciphertexts (Ci) for the Access Tree
+            JSONObject ciMap = new JSONObject();
+
+            for (List<String> branch : accessTree) {
+                if (branch.size() == 1) {
+                    // OR Branch with single attribute (Threshold 1) -> share is just k
+                    String attr = branch.get(0);
+
+                    // Extract raw point from X.509 encoding
+                    byte[] attrBytes = Base64.getDecoder().decode(pubKeysJson.getString(attr));
+                    SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(attrBytes);
+                    ECPoint pk_i = ecSpec.getCurve().decodePoint(spki.getPublicKeyData().getBytes());
+
+                    ECPoint c_i = pk_i.multiply(k).normalize();
+                    ciMap.put(attr, Base64.getEncoder().encodeToString(c_i.getEncoded(true)));
+
+                } else if (branch.size() == 2) {
+                    // AND Branch with two attributes (Threshold 2) -> Split k using 1-degree polynomial: f(x) = k + r*x
+                    String attr1 = branch.get(0);
+                    String attr2 = branch.get(1);
+
+                    BigInteger r = new BigInteger(q.bitLength(), random).mod(q);
+                    BigInteger share1 = k.add(r).mod(q);                            // f(1) = k + r(1)
+                    BigInteger share2 = k.add(r.multiply(BigInteger.TWO)).mod(q);  // f(2) = k + r(2)
+
+                    // Calculate Ci for attr1
+                    byte[] attr1Bytes = Base64.getDecoder().decode(pubKeysJson.getString(attr1));
+                    SubjectPublicKeyInfo spki1 = SubjectPublicKeyInfo.getInstance(attr1Bytes);
+                    ECPoint pk_1 = ecSpec.getCurve().decodePoint(spki1.getPublicKeyData().getBytes());
+                    ECPoint c_1 = pk_1.multiply(share1).normalize();
+                    ciMap.put(attr1, Base64.getEncoder().encodeToString(c_1.getEncoded(true)));
+
+                    // Calculate Ci for attr2
+                    byte[] attr2Bytes = Base64.getDecoder().decode(pubKeysJson.getString(attr2));
+                    SubjectPublicKeyInfo spki2 = SubjectPublicKeyInfo.getInstance(attr2Bytes);
+                    ECPoint pk_2 = ecSpec.getCurve().decodePoint(spki2.getPublicKeyData().getBytes());
+                    ECPoint c_2 = pk_2.multiply(share2).normalize();
+                    ciMap.put(attr2, Base64.getEncoder().encodeToString(c_2.getEncoded(true)));
+                }
+            }
+
+            // 8. Prepare JSON payload for the Backend
+            JSONObject obj = new JSONObject();
+            obj.put("hosId", hosid);
+            obj.put("allowedRole", "N/A"); // Legacy fields, keeping them safe
+            obj.put("allowedSpecialization", "N/A");
+            obj.put("policyType", "or");
+
+            // This is CT = (T, Ci) from your algorithm
+            obj.put("accessTree", accessTree.toString()); // Stores as "[[doctor, cardiology], [nurse]]"
+            obj.put("cipherKey", ciMap.toString());       // Stores the encrypted pieces
+
+            // 9. Send multipart form-data to your User Service
+            String uploadResponse = sendMultipart("/upload", jwtToken, obj, "img", encryptedFile, "image/jpeg");
+            System.out.println("\nServer Response: " + uploadResponse);
+
+        } catch (Exception e) {
+            System.out.println("Encryption Error: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
 
@@ -471,6 +675,41 @@ public class UserCli {
 
         } catch (Exception e) {
             return "Error: " + e.getMessage();
+        }
+    }
+
+    private static String sendGet(String endpoint, String token) {
+        try {
+            URL url = new URL(BASE_URL + endpoint);
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+
+            con.setRequestMethod("GET");
+            con.setRequestProperty("Content-Type", "application/json");
+
+            if (token != null) {
+                con.setRequestProperty("Authorization", "Bearer " + token);
+            }
+
+            int status = con.getResponseCode();
+            InputStream is = (status >= 200 && status < 300)
+                    ? con.getInputStream()
+                    : con.getErrorStream();
+
+            BufferedReader in = new BufferedReader(new InputStreamReader(is));
+            String inputLine;
+            StringBuilder response = new StringBuilder();
+
+            while ((inputLine = in.readLine()) != null) {
+                response.append(inputLine);
+            }
+            in.close();
+
+            //System.out.println("\nResponse: " + response + "\n");
+            return response.toString();
+
+        } catch (Exception e) {
+            System.out.println("Error: " + e.getMessage());
+            return "";
         }
     }
 

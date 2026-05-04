@@ -9,7 +9,10 @@ import com.Suchorit.AttributeAuthority.repo.HospitalRepo;
 import com.Suchorit.AttributeAuthority.repo.KeyRepo;
 import com.Suchorit.AttributeAuthority.repo.StaffRepo;
 import com.Suchorit.AttributeAuthority.repo.UserRepo;
+import org.bouncycastle.jce.ECNamedCurveTable;
+import org.bouncycastle.jce.spec.ECParameterSpec;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -22,6 +25,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.KeyAgreement;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
@@ -31,6 +35,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.math.BigInteger;
 
 @Service
 public class UserService {
@@ -50,6 +55,9 @@ public class UserService {
     EncryptionService encryptionService;
     @Autowired
     UserFeign userFeign;
+
+    @Value("${abe.master.secret.key}")
+    private String masterSecretKeyBase64;
 
     private BCryptPasswordEncoder encoder=new BCryptPasswordEncoder(12);
     public ResponseEntity<Map<String, String>> addUser(UserData user) {
@@ -277,6 +285,65 @@ public class UserService {
         PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
         KeyFactory kf = KeyFactory.getInstance("EC");
         return kf.generatePrivate(spec);
+    }
+
+    public ResponseEntity<Map<String, Object>> generateStaffAttributeKeys
+            (String uid, List<String> attributes) {
+        Map<String, Object> response = new HashMap<>();
+        Map<String, String> dMap = new HashMap<>(); // This is the 'D' map from your Algorithm
+
+        try {
+            // 1. Setup Bouncy Castle Curve Parameters (Do this ONCE outside the loop)
+            ECParameterSpec ecSpec = ECNamedCurveTable.getParameterSpec("secp256r1");
+            BigInteger q = ecSpec.getN(); // This is Zq*
+            BigInteger a = new BigInteger(1, Base64.getDecoder().decode(masterSecretKeyBase64));
+
+            // 2. Hash the Uid (Do this ONCE outside the loop)
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] uidHashBytes = digest.digest(uid.getBytes(StandardCharsets.UTF_8));
+            BigInteger hashUid = new BigInteger(1, uidHashBytes);
+
+            // 3. Loop through every attribute the user has (e.g., ["doctor", "cardiology"])
+            for (String attr : attributes) {
+                // Fetch the raw ai for THIS specific attribute
+                Key key = keyRepo.findById(attr.toLowerCase())
+                        .orElseThrow(() -> new RuntimeException("Attribute not found: " + attr));
+                String rawPrivateKeyB64 = encryptionService.decrypt(key.getPriKey());
+
+                // Convert ai to BigInteger
+                BigInteger ai = new BigInteger(1, Base64.getDecoder().decode(rawPrivateKeyB64));
+
+                // Phase 2 Math: Calculate modular inverse of ai (ai^-1 mod q)
+                BigInteger aiInverse = ai.modInverse(q);
+
+                // Phase 2 Math: Di = (Hash(Uid) * a * ai^-1) mod q
+                BigInteger Di = hashUid.multiply(a).multiply(aiInverse).mod(q);
+
+                // Add to our payload map: D.put(i, Di)
+                dMap.put(attr.toLowerCase(), Base64.getEncoder().encodeToString(Di.toByteArray()));
+            }
+
+            // 4. Send the complete map of keys back to the Doctor Service
+            response.put("uid", uid);
+            response.put("keys", dMap);
+
+        } catch (Exception e) {
+            response.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+        return ResponseEntity.ok(response);
+    }
+
+    public ResponseEntity<Map<String,Object>> getRolesKeys(List<String> roles){
+        Map<String,Object> response=new HashMap<>();
+        if(!roles.isEmpty()){
+            for(String role:roles){
+                Key key=keyRepo.findById(role.toLowerCase()).orElseThrow();
+                response.put(role,key.getPubKey());
+            }
+            return ResponseEntity.ok(response);
+        }
+        else return ResponseEntity.badRequest().body(response);
     }
 
 }

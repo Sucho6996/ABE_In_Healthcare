@@ -98,4 +98,12 @@ public class UserController {
             (@RequestHeader("Authorization") String authHeader,@RequestParam("id") String id){
         return userService.getSecretKey(authHeader,id);
     }
+
+    @GetMapping("/getPubKeys")
+    public ResponseEntity<Map<String,Object>> getPubKeys
+            (@RequestParam List<String> roles){
+        return userService.getPubKeys((roles));
+    }
+
+
 }

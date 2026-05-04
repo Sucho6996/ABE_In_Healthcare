@@ -1,12 +1,15 @@
 package com.Suchorit.UserService.controller;
 
+import com.Suchorit.UserService.model.KeyRequest;
 import com.Suchorit.UserService.model.PatientDetails;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import java.util.List;
 import java.util.Map;
 
 @FeignClient("AttributeAuthority")
@@ -23,5 +26,9 @@ public interface AAFeign {
             (@RequestParam("pubKey") String publicKey,
              @RequestParam("role1") String role1,
              @RequestParam("role2") String role2);
+
+    @GetMapping("AA/getPubKeys")
+    public ResponseEntity<Map<String,Object>> getPubKeys
+            (@RequestParam List<String> roles);
 
 }
