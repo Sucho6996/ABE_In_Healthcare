@@ -10,7 +10,8 @@ The Doctor Service handles authentication and authorization for medical staff (d
 
 - **Staff Authentication**: JWT-based login/logout for medical staff
 - **Password Management**: Secure password reset functionality
-- **Prescription Access**: Role and specialization-based access to patient records
+- **Prescription Access**: Role and specialization-based access to patient records; OR-policy prescriptions expose `policyType`, `accessTree`, and `cipherKey` through `getPrescription`
+- **Staff attribute keys**: `POST /staff/genStaffAttrKey` forwards the logged-in staff’s registration number, designation, and specialization to the Attribute Authority to obtain per-attribute **D** keys for OR decryption
 - **Key Management**: Public key storage and retrieval for encryption operations
 - **Hospital Records**: Access to all prescriptions from the staff member's hospital
 - **Professional Records**: Access to prescriptions based on role and specialization
@@ -138,7 +139,7 @@ aes.key=your_base64_encoded_key
 
 #### Get Key
 - **Endpoint**: `POST /staff/getKey`
-- **Description**: Retrieve encryption keys for authenticated staff
+- **Description**: Retrieve encryption keys for authenticated staff (ECDH unwrap material for AND-policy flows). Some clients append `?id={prescription_id}` for bookkeeping; the server implementation may ignore unknown query parameters.
 - **Headers**: `Authorization: Bearer {token}`
 - **Response**:
   ```json
@@ -148,6 +149,12 @@ aes.key=your_base64_encoded_key
     "spec": "encrypted_specialization_key"
   }
   ```
+
+#### Generate staff attribute keys (OR decryption)
+- **Endpoint**: `POST /staff/genStaffAttrKey`
+- **Description**: Builds a `KeyRequest` from the JWT subject (staff `regNo`) with `attributes = [designation, specialization]` and calls Attribute Authority `POST /AA/genStaffAttrKey`. Used when opening prescriptions with `policyType: "or"`.
+- **Headers**: `Authorization: Bearer {token}`
+- **Response**: Same shape as Attribute Authority (`uid`, `keys` map)
 
 ### Prescription Access
 
@@ -165,7 +172,7 @@ aes.key=your_base64_encoded_key
 
 #### Get Prescription Details
 - **Endpoint**: `POST /staff/getPrescription?id={prescription_id}`
-- **Description**: Get specific prescription with encrypted image
+- **Description**: Get specific prescription with encrypted image and metadata. For OR policies, includes `policyType: "or"`, stringified `accessTree`, and `cipherKey`.
 - **Query Parameters**:
   - `id`: Prescription ID
 - **Response**:
@@ -200,10 +207,13 @@ aes.key=your_base64_encoded_key
 - `id`: Prescription ID
 - `adharNo`: Patient Aadhar number
 - `hosId`: Hospital ID
-- `allowedRole`: Required role for access
-- `allowedSpecialization`: Required specialization
+- `allowedRole`: Required role for access (legacy AND flows)
+- `allowedSpecialization`: Required specialization (legacy AND flows)
 - `image`: Encrypted prescription image
 - `uploadDate`: Upload timestamp
+- `policyType`: `"and"`, `"or"`, or legacy `"standard"` / absent
+- `accessTree`: String representation of OR access branches (e.g. `"[[doctor, cardiology], [nurse]]"`)
+- `cipherKey`: Stringified JSON map of attribute ciphertext components for OR policies
 
 ## Security
 
@@ -233,8 +243,8 @@ aes.key=your_base64_encoded_key
 - `getPrescription(id)`: Get prescription details
 
 #### AAFeign (AttributeAuthority)
-- `retrieve(role)`: Get role public key
-- `giveSecretKey(pubKey, role1, role2)`: Get encrypted role/specialization keys
+- `retrieve(role)`: `POST /AA/getKey` — role key material
+- `generateStaffAttributeKeys(KeyRequest)`: `POST /AA/genStaffAttrKey` — staff attribute keys for OR policies
 
 ## Database Schema
 

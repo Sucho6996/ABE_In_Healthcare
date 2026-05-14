@@ -10,9 +10,9 @@ The User Service handles patient registration, authentication, and secure prescr
 
 - **Patient Registration**: Secure account creation with Aadhar-based identification
 - **Authentication**: JWT-based login/logout for patients
-- **Prescription Management**: Upload and retrieve encrypted prescriptions
+- **Prescription Management**: Upload and retrieve encrypted prescriptions with **AND** or **OR** access policies (`policyType`, `accessTree`, `cipherKey`)
 - **Attribute-Based Access**: Role and specialization-based prescription access control
-- **Key Management**: Public key storage and retrieval for encryption operations
+- **Key Management**: Public key storage and retrieval for encryption operations; batch attribute public keys via `getPubKeys`
 - **Account Management**: Account deactivation functionality
 
 ## Technology Stack
@@ -161,6 +161,10 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 - **Query Parameters**:
   - `role`: Role name (e.g., "Doctor", "Nurse")
 
+#### Get public keys (batch)
+- **Endpoint**: `GET /user/getPubKeys?roles=doctor&roles=cardiology` (repeat `roles` per attribute, or comma-separated values in a single `roles` parameter)
+- **Description**: Proxies to Attribute Authority `GET /AA/getPubKeys` so authenticated patients can fetch multiple attribute public keys for OR-policy encryption (used by the CLI). **Requires** `Authorization: Bearer {token}`.
+
 ### Prescription Management
 
 #### Upload Prescription
@@ -174,9 +178,11 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
     {
       "hosId": "HOSP001",
       "allowedRole": "Doctor",
-      "allowedSpecialization": "Cardiology"
+      "allowedSpecialization": "Cardiology",
+      "policyType": "and"
     }
     ```
+    For **OR** uploads, the CLI sends `policyType: "or"`, stringified `accessTree` (list of branches), and `cipherKey` (JSON map of ciphertext components). Legacy rows may omit these fields.
   - `img`: Encrypted image file (MultipartFile)
 - **Response**:
   ```json
@@ -247,7 +253,10 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
   {
     "image": "base64_encrypted_image",
     "key": "patient_public_key",
-    "spec": "specialization_or_N/A"
+    "spec": "specialization_or_N/A",
+    "policyType": "and",
+    "accessTree": "[]",
+    "cipherKey": "{}"
   }
   ```
 
@@ -269,10 +278,13 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 - `id`: Prescription ID (Primary Key, Auto-generated)
 - `adharNo`: Patient Aadhar number
 - `hosId`: Hospital ID
-- `allowedRole`: Required role for access (Doctor/Nurse)
+- `allowedRole`: Required role for access (Doctor/Nurse) — primary field for AND policies
 - `allowedSpecialization`: Required specialization or "N/A"
 - `image`: Encrypted prescription image (Base64)
 - `uploadDate`: Upload timestamp
+- `policyType`: `"and"`, `"or"`, or legacy values
+- `accessTree`: Serialized OR access structure when `policyType` is `"or"`
+- `cipherKey`: Serialized per-attribute ciphertext metadata when `policyType` is `"or"`
 
 ## Security
 
@@ -303,9 +315,10 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 ### Feign Clients
 
 #### AAFeign (AttributeAuthority)
-- `retrieve(role)`: Get role public key
+- `retrieve(role)`: Get role key material (`POST /AA/getKey`)
 - `giveKey(patientDetails)`: Provide encryption keys
 - `giveSecretKey(pubKey, role1, role2)`: Get encrypted role/specialization keys
+- `getPubKeys(roles)`: `GET /AA/getPubKeys` — batch public keys for OR-policy client encryption
 
 ## Database Schema
 

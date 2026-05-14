@@ -1,19 +1,37 @@
-# ABE in Healthcare - Command Line Interface (CLI)
+# ABE in Healthcare
+
+This repository contains a Spring Boot microservice stack for attribute-based healthcare workflows, plus a Java CLI for local demos. Service-specific documentation lives in each module’s `README.md`.
+
+| Module | Description |
+|--------|-------------|
+| [AttributeAuthority](AttributeAuthority/README.md) | Central keys, hospitals, ABE master parameters, staff attribute key generation |
+| [UserService](UserService/README.md) | Patients, encrypted prescriptions (AND / OR policies) |
+| [Doctor](Doctor/README.md) | Staff login, prescription access, OR-policy decryption helpers |
+| [Hospital](Hospital/README.md) | Hospital login and staff registration |
+| [Cli](#command-line-interface-cli) | Interactive clients (this document’s CLI section) |
+
+Design notes: [Algorithm.md](Algorithm.md), [OR_Access_Plan.md](OR_Access_Plan.md).
+
+---
+
+# Command Line Interface (CLI)
 
 A command-line interface application for interacting with the Attribute-Based Encryption (ABE) Healthcare system. This CLI provides secure access to healthcare services for different user roles including Patients, Doctors, Hospitals, and Attribute Authorities.
 
 ## Overview
 
-This CLI application enables secure communication with the ABE Healthcare microservices architecture. It implements cryptographic operations for secure prescription management, user authentication, and role-based access control using Elliptic Curve Cryptography (ECC) and AES-GCM encryption.
+This CLI application enables secure communication with the ABE Healthcare microservices architecture. It implements cryptographic operations for secure prescription management, user authentication, and role-based access control using Elliptic Curve Cryptography (ECC) and AES-GCM encryption. Recent additions include **OR–AND style policies** (multiple disjunctive branches over attributes) on patient upload, and matching **OR decryption** on the doctor CLI using staff attribute keys from the Attribute Authority.
 
 ## Features
 
 - **Multi-Role Support**: Access the system as User (Patient), Doctor, Hospital, or Attribute Authority
 - **Secure Authentication**: JWT-based authentication with password reset functionality
 - **Encrypted Prescription Management**: Upload, view, and manage encrypted medical prescriptions
+- **AND policy uploads** (`policyType: "and"`): Classic layered encryption using role and optional specialization public keys
+- **OR policy uploads** (`policyType: "or"`): Access tree and per-attribute ciphertext metadata; uses the AA master public key (`abe.master.public.key`) and role public keys from `GET /user/getPubKeys`
 - **Key Management**: Automatic generation and storage of cryptographic keys
-- **Attribute-Based Access Control**: Role and specialization-based access to encrypted data
-- **End-to-End Encryption**: Uses ECDH key exchange and AES-GCM encryption
+- **Attribute-Based Access Control**: Role and specialization-based access to encrypted data; OR policies use `POST /staff/genStaffAttrKey` (doctor) backed by `POST /AA/genStaffAttrKey`
+- **End-to-End Encryption**: Uses ECDH key exchange and AES-GCM encryption; OR branch session keys use `EcKeyUtil.sha256FromP256AffineX` (SHA-256 over the P-256 affine **X** coordinate, 32-byte big-endian)
 
 ## Architecture
 
@@ -28,14 +46,15 @@ This CLI application enables secure communication with the ABE Healthcare micros
 ### Utility Classes
 
 - **`KeyGeneration.java`**: Generates EC key pairs and manages key storage
-- **`EcKeyUtil.java`**: Utilities for loading and deriving ECDH keys
+- **`EcKeyUtil.java`**: Loads EC keys from Base64, derives ECDH AES keys, and (for OR encrypt/decrypt) hashes the P-256 affine **X** coordinate with SHA-256 via `sha256FromP256AffineX`
 - **`AESGCM.java`**: AES-GCM encryption/decryption implementation
 - **`EncryptionService.java`**: Encryption service wrapper
 
 ## Prerequisites
 
-- **Java Development Kit (JDK)**: Version 8 or higher
-- **JSON Library**: `json.jar` (included in `lib/` directory)
+- **Java Development Kit (JDK)**: Version 8 or higher (Java 21 recommended to align with the Spring services)
+- **JSON Library**: `json.jar` (expected under `Cli/lib/` if you compile from the command line)
+- **Bouncy Castle**: Patient OR uploads and doctor OR decryption use Bouncy Castle APIs (`org.bouncycastle.*`). Add `bcprov-jdk18on` (and matching `bcutil` if required by your version) to the classpath when compiling or running `UserCli` / `DoctorCli`
 - **Backend Services**: All microservices must be running:
   - User Service (port 8090)
   - Hospital Service (port 8081)
@@ -50,16 +69,16 @@ This CLI application enables secure communication with the ABE Healthcare micros
    cd Cli
    ```
 
-2. **Ensure `json.jar` is in the `lib/` directory**
+2. **Ensure `json.jar` is in the `lib/` directory** (create `Cli/lib` if needed)
 
-3. **Compile the Java files**:
+3. **Compile the Java files** (add Bouncy Castle jars next to `json.jar` for OR policy support):
    ```bash
-   javac -cp "lib/json.jar" *.java
+   javac -cp "lib/json.jar;lib/bcprov-jdk18on-*.jar" *.java
    ```
 
    Or compile individually:
    ```bash
-   javac -cp "lib/json.jar" Cli.java UserCli.java DoctorCli.java HospitalCli.java AtributeAuth.java KeyGeneration.java EcKeyUtil.java AESGCM.java EncryptionService.java
+   javac -cp "lib/json.jar;lib/bcprov-jdk18on-*.jar" Cli.java UserCli.java DoctorCli.java HospitalCli.java AtributeAuth.java KeyGeneration.java EcKeyUtil.java AESGCM.java EncryptionService.java
    ```
 
 ## Usage
@@ -68,12 +87,12 @@ This CLI application enables secure communication with the ABE Healthcare micros
 
 Run the main CLI application:
 ```bash
-java -cp ".:lib/json.jar" Cli
+java -cp ".:lib/json.jar:lib/bcprov-jdk18on-*.jar" Cli
 ```
 
 Or on Windows:
 ```bash
-java -cp ".;lib/json.jar" Cli
+java -cp ".;lib/json.jar;lib/bcprov-jdk18on-*.jar" Cli
 ```
 
 ### Main Menu
@@ -95,17 +114,22 @@ Your choice:
 **Features:**
 - Signup: Create a new patient account
 - Login: Authenticate with Aadhar number and password
-- Upload Prescription: Encrypt and upload medical prescriptions
+- **Upload Prescription (AND access only)**: Classic single role / optional specialization policy (`policyType: "and"`)
+- **Upload Prescription (OR–AND access)**: Build one or more branches (each branch is an AND of role + optional specialization, or a single role); stored with `policyType: "or"`, `accessTree`, and `cipherKey`
 - View Prescriptions: Decrypt and view your prescriptions
 - Deactivate Account: Delete your account
 
 **Key Operations:**
 1. **Signup**: Creates account, generates EC key pair, stores private key locally
-2. **Upload Prescription**: 
+2. **Upload Prescription (AND)**: 
    - Encrypts prescription image using ECDH key exchange
    - Supports role-based (Doctor/Nurse) and specialization-based access
-   - Uploads encrypted file to server
-3. **View Prescription**: 
+   - Uploads encrypted file to server with `policyType: "and"`
+3. **Upload Prescription (OR–AND)**:
+   - Fetches attribute public keys via `GET /user/getPubKeys?roles=...` (comma-separated list, repeated `roles=` also supported by Spring)
+   - Resolves the AA **master public key** in order: environment variable `ABE_OR_MASTER_PK`, file `abe_or_master_pk.base64`, `abe.master.public.key` in local `application.properties`, or a built-in default (must match Attribute Authority `abe.master.public.key` for decryption to succeed)
+   - Uploads ciphertext and JSON metadata (`accessTree`, `cipherKey`, `policyType: "or"`)
+4. **View Prescription**: 
    - Retrieves encrypted prescription
    - Decrypts using stored private key
    - Opens image in default viewer
@@ -124,7 +148,8 @@ Your choice:
 1. **Login**: Authenticates with registration number and password
 2. **View Prescriptions**: 
    - Lists available prescriptions
-   - Decrypts using role and specialization keys
+   - If `policyType` is **`or`**, loads staff attribute keys via `POST /staff/genStaffAttrKey` (proxied to the Attribute Authority), recovers the session key from `accessTree` / `cipherKey`, then decrypts the image
+   - Otherwise decrypts using the existing ECDH unwrap flow (`/staff/getKey`) and role/specialization keys
    - Opens decrypted prescription images
 
 **Private Key Storage**: Private keys are stored as `{registrationNumber}.txt` files.
@@ -180,6 +205,10 @@ Your choice:
    - Optional specialization-based encryption layer
    - Patient's public key used for final encryption
 
+5. **OR policies (patient upload)**:
+   - Content key derived from the master EC point and a random scalar **k** (see `Algorithm.md` / `OR_Access_Plan.md`)
+   - Per-attribute ciphertext components sent as `cipherKey` JSON; branches described by `accessTree`
+
 ### Key Management
 
 - **Public Keys**: Stored on server, used for encryption
@@ -226,8 +255,9 @@ Cli/
 - `POST /staff/resetPass` - Reset password
 - `POST /staff/getPDetailsByHos` - Get hospital prescriptions
 - `POST /staff/getPDetailsByProf` - Get accessible prescriptions
-- `POST /staff/getPrescription?id={id}` - Get prescription details
-- `POST /staff/getKey?id={id}` - Get encryption keys
+- `POST /staff/getPrescription?id={id}` - Get prescription details (includes `policyType`, `accessTree`, `cipherKey` when applicable)
+- `POST /staff/getKey` - Get encryption keys for the authenticated staff member (the CLI also calls `POST /staff/getKey?id={id}` for legacy unwrap flows)
+- `POST /staff/genStaffAttrKey` - Returns `{ "uid", "keys": { "attr": "DiBase64", ... } }` for OR-policy decryption
 - `POST /staff/setPublicKey` - Set doctor public key
 
 ### Hospital Service (Port 8081)
@@ -247,6 +277,14 @@ Cli/
 - `POST /AA/seeAllHospital` - View all hospitals
 - `POST /AA/revokeHospital?id={id}` - Revoke hospital
 - `POST /AA/setPublicKey` - Set public key
+- `POST /AA/genKey?role={role}` - Generate/store role key pair
+- `POST /AA/getKey?role={role}` - Retrieve public and decrypted private key material for a role (see service README)
+- `POST /AA/giveSecretKey?pubKey=&role1=&role2=` - Role/spec secrets wrapped for a user public key
+- `POST /AA/genStaffAttrKey` - JSON body `{"uId":"...","attributes":["doctor","cardiology"]}` → per-attribute **D** map for OR-policy decryption
+- `GET /AA/getPubKeys?roles=role1&roles=role2` - Public keys for named attributes (used internally and for advanced clients)
+
+### User Service — additional endpoints (Port 8090)
+- `GET /user/getPubKeys?roles=...` - Proxies to Attribute Authority; used by the patient CLI for OR uploads
 
 ## Troubleshooting
 

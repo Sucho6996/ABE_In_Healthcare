@@ -340,6 +340,7 @@ The service registers with Eureka Server for service discovery and health monito
 ### Attribute Authority Service
 - Hospitals must be registered in Attribute Authority Service
 - Hospital registration managed by Attribute Authority administrators
+- For **OR-policy** prescriptions, staff **designation** and **specialization** values should match attribute key names registered in the Attribute Authority (the service stores role keys in **lowercase**; the patient CLI normalizes OR-policy input to lowercase)
 
 ## Development
 

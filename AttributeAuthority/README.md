@@ -14,6 +14,8 @@ The Attribute Authority Service is the central authority for managing encryption
 - **Key Distribution**: Secure key distribution for encryption operations
 - **Role-Based Keys**: Generate keys for different roles (Doctor, Nurse, etc.)
 - **Specialization Keys**: Generate keys for medical specializations
+- **OR-policy support**: Master public/secret parameters (`abe.master.public.key`, `abe.master.secret.key`) and **staff attribute key** generation (`/AA/genStaffAttrKey`) used with prescription `policyType: "or"`
+- **Batch public keys**: `GET /AA/getPubKeys` returns the stored public key for each requested role/attribute name
 
 ## Technology Stack
 
@@ -52,6 +54,10 @@ spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
 
 # AES Encryption Key
 aes.key=your_base64_encoded_key
+
+# ABE master parameters (OR access / attribute-key math; keep secret key server-side only)
+abe.master.secret.key=your_base64_encoded_master_secret
+abe.master.public.key=your_base64_encoded_master_public
 ```
 
 ## Installation
@@ -130,42 +136,76 @@ aes.key=your_base64_encoded_key
 
 #### Generate Key
 - **Endpoint**: `POST /AA/genKey?role={role}`
-- **Description**: Generate encryption key pair for a role or specialization
-- **Headers**: `Authorization: Bearer {token}` (optional, some endpoints are public)
+- **Description**: Generate encryption key pair for a role or specialization and persist it (private key encrypted at rest)
 - **Query Parameters**:
-  - `role`: Role or specialization name (e.g., "Doctor", "Nurse", "Cardiology")
-- **Response**:
+  - `role`: Role or specialization name (e.g., "Doctor", "Nurse", "Cardiology"); stored lowercased
+- **Response** (typical):
   ```json
   {
-    "message": "Key generated successfully",
-    "publicKey": "base64_public_key"
+    "message": "Role details created"
   }
   ```
+  If the role already exists: `"message": "Role already exist"`.
 
 #### Get Key
 - **Endpoint**: `POST /AA/getKey?role={role}`
-- **Description**: Retrieve public key for a role or specialization
+- **Description**: Retrieve the public key and decrypted private key material for a role or specialization (administrative / service use)
 - **Query Parameters**:
   - `role`: Role or specialization name
 - **Response**:
   ```json
   {
-    "message": "base64_public_key"
+    "public": "base64_public_key",
+    "private": "base64_private_key"
   }
   ```
 
 #### Give Secret Key
 - **Endpoint**: `POST /AA/giveSecretKey?pubKey={public_key}&role1={role1}&role2={role2}`
-- **Description**: Generate encrypted role and specialization keys for a patient's public key
+- **Description**: ECDH-wrap role (and optionally specialization) material for a caller’s EC public key
 - **Query Parameters**:
-  - `pubKey`: Patient's public key (Base64)
+  - `pubKey`: User’s public key (Base64 X.509 SPKI)
   - `role1`: Primary role (e.g., "Doctor")
-  - `role2`: Specialization or "N/A"
+  - `role2`: Specialization or `"N/A"` to skip the second layer
 - **Response**:
   ```json
   {
-    "role": "encrypted_role_key",
-    "spec": "encrypted_specialization_key"
+    "pubKey": "role1_public_key",
+    "role": "base64_encrypted_blob",
+    "spec": "base64_encrypted_blob"
+  }
+  ```
+  `spec` is omitted when `role2` is `"N/A"`. Errors may appear under an `error` field.
+
+#### Generate staff attribute keys (OR policies)
+- **Endpoint**: `POST /AA/genStaffAttrKey`
+- **Description**: For a staff identifier (`uId`, typically registration number) and a list of attribute names (e.g. designation + specialization), compute per-attribute **D** values used by the doctor CLI to decrypt OR-policy prescriptions. Uses `abe.master.secret.key` and each attribute’s stored EC private scalar (`secp256r1`).
+- **Request Body**:
+  ```json
+  {
+    "uId": "DOC123456",
+    "attributes": ["doctor", "cardiology"]
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "uid": "DOC123456",
+    "keys": {
+      "doctor": "base64_Di",
+      "cardiology": "base64_Di"
+    }
+  }
+  ```
+
+#### Get public keys for multiple roles
+- **Endpoint**: `GET /AA/getPubKeys?roles=a&roles=b` (repeat `roles` for each attribute, or use a comma-separated list depending on client)
+- **Description**: Returns a map of role name → stored public key (Base64) for each existing key row
+- **Response** (example):
+  ```json
+  {
+    "doctor": "MIG...",
+    "cardiology": "MIG..."
   }
   ```
 
@@ -261,13 +301,17 @@ aes.key=your_base64_encoded_key
 - Public keys distributed to authorized services
 - Private keys encrypted and stored securely
 - Role and specialization keys encrypted with patient public keys for access control
+- OR-policy flows use the **master public key** on clients for encryption metadata, and **staff attribute keys** derived with the **master secret** (server only) for decryption
 
 ### Public Endpoints
-Some endpoints are publicly accessible (no authentication required):
+The following paths are configured as `permitAll` in `SecurityConfig` (suitable for tightening behind a gateway or mutual TLS in production):
 - `/AA/login`
 - `/AA/logout`
 - `/AA/getKey`
+- `/AA/giveKey`
 - `/AA/giveSecretKey`
+- `/AA/genStaffAttrKey`
+- `/AA/getPubKeys`
 
 ## Inter-Service Communication
 
