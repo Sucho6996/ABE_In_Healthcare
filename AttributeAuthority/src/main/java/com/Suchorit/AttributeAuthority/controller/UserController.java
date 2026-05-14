@@ -88,9 +88,4 @@ public class UserController {
             (@RequestParam List<String> roles){
         return userService.getRolesKeys(roles);
     }
-
-    @GetMapping("/getMasterPubPoint")
-    public ResponseEntity<Map<String, String>> getMasterPubPoint() {
-        return userService.getMasterPublicPoint();
-    }
 }

@@ -15,6 +15,8 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.*;
 //import java.security.spec.ECParameterSpec;
 //import java.security.spec.ECPoint;
@@ -25,7 +27,18 @@ import java.util.List;
 public class UserCli {
 
     private static final String BASE_URL = "http://localhost:8090/user";
-    private static final String MASTER_PK="BBwlqaf2AsufDn9kGHNRrYV1YmiPUvfNkZH2qU5vIu+o+3OWeDnOkJ5PKjEViPmv5lISSbN9WPWn7yORMMSsC0M=";
+    /**
+     * PMK (= PK = compressed a·G), same entry as AA {@code abe.master.public.key}.
+     * SMK is AA {@code abe.master.secret.key} — never used client-side for OR encrypt; keep it off the CLI in production.
+     */
+    private static final String PROP_MASTER_PUBLIC = "abe.master.public.key";
+    private static final String ABE_APPLICATION_PROPERTIES = "application.properties";
+
+    /** Last-resort fallback; mirrors AttributeAuthority default {@code abe.master.public.key}. */
+    private static final String DEFAULT_OR_MASTER_PK = "BBwlqaf2AsufDn9kGHNRrYV1YmiPUvfNkZH2qU5vIu+o+3OWeDnOkJ5PKjEViPmv5lISSbN9WPWn7yORMMSsC0M=";
+    /** Same semantics as AA property {@code #PROP_MASTER_PUBLIC} (often copy of PMK Base64 only). */
+    private static final String ENV_OR_MASTER_PK = "ABE_OR_MASTER_PK";
+    private static final String OR_MASTER_PK_FILE = "abe_or_master_pk.base64";
     private static String jwtToken = null;
     private static String adhar;
 
@@ -185,13 +198,7 @@ public class UserCli {
         String endpoint="/getDetails?id="+id;
         String response=sendPost(endpoint,"",jwtToken);
         JSONObject object=new JSONObject(response);
-        //System.out.println(object);
-//        String endpoint2="/giveKey?id="+id;
-//        String res=sendPost(endpoint2,"",jwtToken);
-//        JSONObject jsonObject=new JSONObject(res);
-//        String key=jsonObject.getString("message");
-//        byte[] sKey=Base64.getDecoder().decode(key);
-//        X509EncodedKeySpec secret=new X509EncodedKeySpec(sKey);
+
 
         if(!object.has("image")){
             System.out.println("No Image found");
@@ -237,8 +244,6 @@ public class UserCli {
             System.out.println("Error opening image: " + e.getMessage());
         }
     }
-
-
 
     private static void sendPublicKey(String adharNo,String key){
         String encodedKey = URLEncoder.encode(key, StandardCharsets.UTF_8);
@@ -347,59 +352,44 @@ public class UserCli {
         System.out.println("\nServer Response: " + response);
     }
 
-//    private static void uploadImageOr(Scanner sc){
-//        List<List<String>> accessTree=new ArrayList<>();
-//        List<String> list=new ArrayList<>();
-//        System.out.println("Enter Hospital Id:");
-//        String hosid = sc.nextLine();
-//
-//        System.out.print("Enter filePath: ");
-//        String filePath = sc.nextLine();
-//
-//        char choice='y';
-//        while(choice=='y' || choice=='Y'){
-//            System.out.print("Enter Allowed Role (Doctor/Nurse): ");
-//            String allowedRole = sc.nextLine();
-//            System.out.print("Enter Allowed Specialization (N/A if none): ");
-//            String specialization = sc.nextLine();
-//            if(allowedRole.isEmpty()){
-//                System.out.println("No role Specified.");
-//            }
-//            else {
-//                if(!specialization.toUpperCase().equals("NA") && !specialization.toUpperCase().equals("N/A")){
-//                    list.add(allowedRole);
-//                    list.add(specialization);
-//                    accessTree.add(new ArrayList<>(List.of(allowedRole,specialization)));
-//                }
-//                else {
-//                    list.add(allowedRole);
-//                    accessTree.add(new ArrayList<>(List.of(allowedRole)));
-//                }
-//            }
-//            System.out.println("Press Y to add another Role\nPress other character to exit");
-//            System.out.print("Your Choice:");
-//            choice = sc.next().charAt(0);
-//            sc.nextLine();
-//        }
-//        File file = new File(filePath);
-//        if (!file.exists()) {
-//            System.out.println("File not found!");
-//            return;
-//        }
-//        File encryptedFile = null;
-//
-//        try {
-//            byte[] fileBytes = Files.readAllBytes(file.toPath());
-//        } catch (IOException e) {
-//            System.out.println(e.getMessage());
-//            return;
-//        }
-//
-//        String queryString = "roles=" + String.join(",", list);
-//        String response =sendGet("/getPubKeys?"+queryString,jwtToken);
-//        System.out.println(response);
-//
-//    }
+    private static String resolveOrMasterPublicKeyBase64() {
+        try {
+            String env = System.getenv(ENV_OR_MASTER_PK);
+            if (env != null && !env.isBlank()) {
+                System.out.println("(OR) PMK (" + PROP_MASTER_PUBLIC + "): env " + ENV_OR_MASTER_PK);
+                return env.trim();
+            }
+            Path pkFile = Paths.get(OR_MASTER_PK_FILE);
+            if (Files.exists(pkFile)) {
+                String s = Files.readString(pkFile).trim();
+                int nl = s.indexOf('\n');
+                if (nl >= 0) {
+                    s = s.substring(0, nl).trim();
+                }
+                if (!s.isEmpty() && !s.startsWith("#")) {
+                    System.out.println("(OR) PMK: raw file " + pkFile.toAbsolutePath());
+                    return s;
+                }
+            }
+            Path appPropsPath = Paths.get(ABE_APPLICATION_PROPERTIES);
+            if (Files.exists(appPropsPath)) {
+                Properties props = new Properties();
+                try (InputStream is = Files.newInputStream(appPropsPath)) {
+                    props.load(is);
+                }
+                String pmk = props.getProperty(PROP_MASTER_PUBLIC);
+                if (pmk != null && !pmk.isBlank()) {
+                    System.out.println("(OR) PMK: " + appPropsPath.toAbsolutePath() + " → " + PROP_MASTER_PUBLIC);
+                    return pmk.trim();
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(OR) Master PK resolve warning: " + e.getMessage());
+        }
+        System.out.println("(OR) PMK: built-in default (" + PROP_MASTER_PUBLIC
+                + " — copy AA application.properties section if mismatched).");
+        return DEFAULT_OR_MASTER_PK;
+    }
 
     private static void uploadImageOr(Scanner sc) {
         List<List<String>> accessTree = new ArrayList<>();
@@ -457,15 +447,29 @@ public class UserCli {
             // 3. Algorithm: Choose random k from Zq*
             BigInteger k = new BigInteger(q.bitLength(), random).mod(q);
 
-            // 4. Algorithm: Calculate Session Key SK = k * PK
-            byte[] masterPkBytes = Base64.getDecoder().decode(MASTER_PK);
-            ECPoint PK = ecSpec.getCurve().decodePoint(masterPkBytes);
+            // 4. PK = AA PMK (abe.master.public.key); scalar a stays on AA as SMK (abe.master.secret.key).
+            String masterPkB64 = resolveOrMasterPublicKeyBase64();
+            byte[] masterPkBytes = Base64.getDecoder().decode(masterPkB64);
+
+            // --- THE CRITICAL FIX FOR STEP 4 ---
+            ECPoint PK;
+            try {
+                // Try to parse standard Java X.509 format first
+                org.bouncycastle.asn1.x509.SubjectPublicKeyInfo spki =
+                        org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(masterPkBytes);
+                PK = ecSpec.getCurve().decodePoint(spki.getPublicKeyData().getBytes());
+            } catch (Exception e) {
+                // Fallback if it's already a raw EC point
+                PK = ecSpec.getCurve().decodePoint(masterPkBytes);
+            }
+            // ------------------------------------
+
             ECPoint SK = PK.multiply(k).normalize();
 
             // 5. Algorithm: Hash SK's X-coordinate to get AES_KEY
             BigInteger kx = SK.getAffineXCoord().toBigInteger();
-            MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
-            byte[] aesKeyBytes = sha256.digest(kx.toByteArray());
+            byte[] aesKeyBytes = EcKeyUtil.sha256FromP256AffineX(kx); // Using your custom hasher
+            System.out.println("Derived AES Key (SHA-256 of SK.x): " + Base64.getEncoder().encodeToString(aesKeyBytes));
             SecretKeySpec aesKey = new SecretKeySpec(aesKeyBytes, "AES");
 
             // 6. Algorithm: Encrypt Message (Cm)
@@ -485,7 +489,8 @@ public class UserCli {
 
                     // Extract raw point from X.509 encoding
                     byte[] attrBytes = Base64.getDecoder().decode(pubKeysJson.getString(attr));
-                    SubjectPublicKeyInfo spki = SubjectPublicKeyInfo.getInstance(attrBytes);
+                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo spki =
+                            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(attrBytes);
                     ECPoint pk_i = ecSpec.getCurve().decodePoint(spki.getPublicKeyData().getBytes());
 
                     ECPoint c_i = pk_i.multiply(k).normalize();
@@ -502,14 +507,16 @@ public class UserCli {
 
                     // Calculate Ci for attr1
                     byte[] attr1Bytes = Base64.getDecoder().decode(pubKeysJson.getString(attr1));
-                    SubjectPublicKeyInfo spki1 = SubjectPublicKeyInfo.getInstance(attr1Bytes);
+                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo spki1 =
+                            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(attr1Bytes);
                     ECPoint pk_1 = ecSpec.getCurve().decodePoint(spki1.getPublicKeyData().getBytes());
                     ECPoint c_1 = pk_1.multiply(share1).normalize();
                     ciMap.put(attr1, Base64.getEncoder().encodeToString(c_1.getEncoded(true)));
 
                     // Calculate Ci for attr2
                     byte[] attr2Bytes = Base64.getDecoder().decode(pubKeysJson.getString(attr2));
-                    SubjectPublicKeyInfo spki2 = SubjectPublicKeyInfo.getInstance(attr2Bytes);
+                    org.bouncycastle.asn1.x509.SubjectPublicKeyInfo spki2 =
+                            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(attr2Bytes);
                     ECPoint pk_2 = ecSpec.getCurve().decodePoint(spki2.getPublicKeyData().getBytes());
                     ECPoint c_2 = pk_2.multiply(share2).normalize();
                     ciMap.put(attr2, Base64.getEncoder().encodeToString(c_2.getEncoded(true)));

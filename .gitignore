@@ -32,3 +32,6 @@ Thumbs.db
 # Logs
 *.log
 
+# Specific Documents
+COST_AND_NETWORK_DELAY.docx
+COST_AND_NETWORK_DELAY.md

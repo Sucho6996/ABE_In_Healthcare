@@ -287,6 +287,53 @@ public class UserService {
         return kf.generatePrivate(spec);
     }
 
+//    public ResponseEntity<Map<String, Object>> generateStaffAttributeKeys
+//            (String uid, List<String> attributes) {
+//        Map<String, Object> response = new HashMap<>();
+//        Map<String, String> dMap = new HashMap<>(); // This is the 'D' map from your Algorithm
+//
+//        try {
+//            // 1. Setup Bouncy Castle Curve Parameters (Do this ONCE outside the loop)
+//            ECParameterSpec ecSpec = ECNamedCurveTable.getParameterSpec("secp256r1");
+//            BigInteger q = ecSpec.getN(); // This is Zq*
+//            BigInteger a = new BigInteger(1, Base64.getDecoder().decode(masterSecretKeyBase64));
+//
+//            // 2. Hash the Uid (Do this ONCE outside the loop)
+//            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+//            byte[] uidHashBytes = digest.digest(uid.getBytes(StandardCharsets.UTF_8));
+//            BigInteger hashUid = new BigInteger(1, uidHashBytes);
+//
+//            // 3. Loop through every attribute the user has (e.g., ["doctor", "cardiology"])
+//            for (String attr : attributes) {
+//                // Fetch the raw ai for THIS specific attribute
+//                Key key = keyRepo.findById(attr.toLowerCase())
+//                        .orElseThrow(() -> new RuntimeException("Attribute not found: " + attr));
+//                String rawPrivateKeyB64 = encryptionService.decrypt(key.getPriKey());
+//
+//                // Convert ai to BigInteger
+//                BigInteger ai = new BigInteger(1, Base64.getDecoder().decode(rawPrivateKeyB64));
+//
+//                // Phase 2 Math: Calculate modular inverse of ai (ai^-1 mod q)
+//                BigInteger aiInverse = ai.modInverse(q);
+//
+//                // Phase 2 Math: Di = (Hash(Uid) * a * ai^-1) mod q
+//                BigInteger Di = hashUid.multiply(a).multiply(aiInverse).mod(q);
+//
+//                // Add to our payload map: D.put(i, Di)
+//                dMap.put(attr.toLowerCase(), Base64.getEncoder().encodeToString(Di.toByteArray()));
+//            }
+//
+//            // 4. Send the complete map of keys back to the Doctor Service
+//            response.put("uid", uid);
+//            response.put("keys", dMap);
+//
+//        } catch (Exception e) {
+//            response.put("message", e.getMessage());
+//            return ResponseEntity.badRequest().body(response);
+//        }
+//        return ResponseEntity.ok(response);
+//    }
+
     public ResponseEntity<Map<String, Object>> generateStaffAttributeKeys
             (String uid, List<String> attributes) {
         Map<String, Object> response = new HashMap<>();
@@ -296,6 +343,10 @@ public class UserService {
             // 1. Setup Bouncy Castle Curve Parameters (Do this ONCE outside the loop)
             ECParameterSpec ecSpec = ECNamedCurveTable.getParameterSpec("secp256r1");
             BigInteger q = ecSpec.getN(); // This is Zq*
+
+            // NOTE: If your masterSecretKeyBase64 was generated using KeyPairGenerator
+            // and exported, it is ALSO in PKCS#8 format and you need to do the .getS() fix here too.
+            // If you just generated 32 random bytes, this line is perfectly fine.
             BigInteger a = new BigInteger(1, Base64.getDecoder().decode(masterSecretKeyBase64));
 
             // 2. Hash the Uid (Do this ONCE outside the loop)
@@ -310,8 +361,14 @@ public class UserService {
                         .orElseThrow(() -> new RuntimeException("Attribute not found: " + attr));
                 String rawPrivateKeyB64 = encryptionService.decrypt(key.getPriKey());
 
-                // Convert ai to BigInteger
-                BigInteger ai = new BigInteger(1, Base64.getDecoder().decode(rawPrivateKeyB64));
+                // --- FIXED IMPLEMENTATION START ---
+                // Load the key as a proper Java PrivateKey using your existing utility method
+                PrivateKey privKey = loadPrivateKeyFromBase64(rawPrivateKeyB64);
+
+                // Cast to ECPrivateKey to extract the actual raw scalar (S)
+                java.security.interfaces.ECPrivateKey ecPriv = (java.security.interfaces.ECPrivateKey) privKey;
+                BigInteger ai = ecPriv.getS();
+                // --- FIXED IMPLEMENTATION END ---
 
                 // Phase 2 Math: Calculate modular inverse of ai (ai^-1 mod q)
                 BigInteger aiInverse = ai.modInverse(q);
@@ -320,6 +377,7 @@ public class UserService {
                 BigInteger Di = hashUid.multiply(a).multiply(aiInverse).mod(q);
 
                 // Add to our payload map: D.put(i, Di)
+                // Note: We use .toByteArray() because Di is now a guaranteed correct mathematical scalar
                 dMap.put(attr.toLowerCase(), Base64.getEncoder().encodeToString(Di.toByteArray()));
             }
 
@@ -328,6 +386,8 @@ public class UserService {
             response.put("keys", dMap);
 
         } catch (Exception e) {
+            System.out.println("Error generating attribute keys: " + e.getMessage());
+            e.printStackTrace();
             response.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(response);
         }

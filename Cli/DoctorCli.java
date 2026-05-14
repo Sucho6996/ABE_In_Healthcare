@@ -296,11 +296,6 @@ public class DoctorCli {
         return response;
     }
 
-    private static SecretKeySpec deriveAESKey(ECPoint skPoint) throws Exception {
-        BigInteger kx = skPoint.getAffineXCoord().toBigInteger();
-        MessageDigest sha256 = MessageDigest.getInstance("SHA-256");
-        return new SecretKeySpec(sha256.digest(kx.toByteArray()), "AES");
-    }
     private static void orDesc(JSONObject obj) {
         try {
             // 1. Fetch Staff Attribute Keys (Di) and UID from Backend
@@ -316,7 +311,9 @@ public class DoctorCli {
             // 2. Parse the Access Tree String (e.g., "[[doctor, cardiology], [nurse]]")
             String treeStr = obj.getString("accessTree");
             List<List<String>> parsedTree = new ArrayList<>();
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[(.*?)\\]").matcher(treeStr);
+
+            // Use stricter regex to ensure we don't accidentally match outer brackets
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\[([^\\[\\]]+)\\]").matcher(treeStr);
             while (m.find()) {
                 String inside = m.group(1);
                 List<String> branch = Arrays.stream(inside.split(","))
@@ -401,6 +398,7 @@ public class DoctorCli {
 
             // 7. Derive AES Key and Decrypt
             SecretKeySpec aesKey = deriveAESKey(SK);
+            System.out.println("Derived AES Key: " + Base64.getEncoder().encodeToString(aesKey.getEncoded()));
             byte[] encryptedImg = Base64.getDecoder().decode(obj.getString("image").replaceAll("\\s", ""));
             byte[] decryptedImg = AESGCM.decrypt(encryptedImg, aesKey);
 
@@ -418,12 +416,15 @@ public class DoctorCli {
 
         } catch (Exception e) {
             System.out.println("ABE Decryption Error: " + e.getMessage());
-            e.printStackTrace();
+            return;
         }
     }
 
-
-
+    /** Same KDF as UserCli.uploadImageOr (EcKeyUtil.sha256FromP256AffineX). */
+    private static SecretKeySpec deriveAESKey(ECPoint skPoint) throws Exception {
+        BigInteger kx = skPoint.getAffineXCoord().toBigInteger();
+        return new SecretKeySpec(EcKeyUtil.sha256FromP256AffineX(kx), "AES");
+    }
     private static String sendPost(String endpoint, String json, String token) {
         try {
             URL url = new URL(BASE_URL + endpoint);
